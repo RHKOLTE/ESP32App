@@ -68,6 +68,27 @@ data class UiState(
     /** If true, the status of the control lines (RTS, CTS, etc.) is displayed. */
     val showControlLines: Boolean = false,
 
+    // HMI Parameters
+    /** The list of HMI parameters. */
+    val hmiParameters: List<HmiParameter> = listOf(
+        HmiParameter("WO", "Work Order"),
+        HmiParameter("PN", "Part No."),
+        HmiParameter("VN", "Vendor No."),
+        HmiParameter("SN", "Serial No."),
+        HmiParameter("WF", "WiFi SSID/Password"),
+        HmiParameter("U1", "Data Push URL", isProtected = true),
+        HmiParameter("U2", "Server Health URL", isProtected = true),
+        HmiParameter("AK", "API Key", isProtected = true),
+        HmiParameter("P1", "P1 Pulse On Time (ms)"),
+        HmiParameter("P2", "P2 Pulse On Time (ms)"),
+        HmiParameter("P1T", "P1 Pulse OK Tolerance (ms)"),
+        HmiParameter("P2T", "P2 Pulse OK Tolerance (ms)"),
+        HmiParameter("T1", "Timer1 Cycle Time (ms)"),
+        HmiParameter("T2", "Timer2 Cycle Time (ms)"),
+        HmiParameter("VST", "Voltage Select to Test Start Time (ms)"),
+        HmiParameter("RTC", "RTC Time")
+    ),
+
     // Control Line Status
     /** The status of the Request to Send (RTS) line. Not serialized. */
     @Transient
@@ -255,6 +276,8 @@ class MainViewModel(application: Application, private val settingsRepository: Se
                             flowControl = importedSettings.flowControl,
                             showControlLines = importedSettings.showControlLines,
 
+                            hmiParameters = importedSettings.hmiParameters,
+
                             fontSize = importedSettings.fontSize,
                             fontStyle = importedSettings.fontStyle,
                             charset = importedSettings.charset,
@@ -288,6 +311,64 @@ class MainViewModel(application: Application, private val settingsRepository: Se
             }
         }
     }
+
+    // region HMI
+
+    /**
+     * Fetches all HMI parameters from the device.
+     */
+    fun fetchHmiParameters() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _uiState.value.hmiParameters.forEach { param ->
+                val command = "GET_DT ${param.key}"
+                send(command)
+                // A small delay between commands can help prevent overwhelming the device
+                kotlinx.coroutines.delay(50)
+            }
+        }
+    }
+
+    /**
+     * Updates a single HMI parameter on the device.
+     * @param parameter The parameter to update.
+     * @param newValue The new value for the parameter.
+     */
+    fun setHmiParameter(parameter: HmiParameter, newValue: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val command = "SET_DT ${parameter.key} $newValue"
+            send(command)
+            // After setting, send a GET to confirm the new value.
+            kotlinx.coroutines.delay(100)
+            send("GET_DT ${parameter.key}")
+        }
+    }
+
+    /**
+     * Parses an incoming line of text to see if it's an HMI parameter update.
+     * @param line The line of text from the serial port.
+     * @return True if the line was parsed and handled as an HMI update, false otherwise.
+     */
+    private fun parseHmiResponse(line: String): Boolean {
+        val parts = line.split(": ", limit = 2)
+        if (parts.size != 2) return false
+
+        val key = parts[0]
+        val value = parts[1]
+
+        val parameterIndex = _uiState.value.hmiParameters.indexOfFirst { it.key == key }
+        if (parameterIndex != -1) {
+            _uiState.update {
+                val newParameters = it.hmiParameters.toMutableList()
+                newParameters[parameterIndex] = newParameters[parameterIndex].copy(value = value)
+                it.copy(hmiParameters = newParameters)
+            }
+            return true
+        }
+        return false
+    }
+
+
+    // endregion
 
     // region Settings Updaters
     // The following functions update a specific setting in the UiState and then save all settings.
@@ -587,11 +668,15 @@ class MainViewModel(application: Application, private val settingsRepository: Se
                     // Split data by newline character (0x0A).
                     if (data[i] == 0x0A.toByte()) {
                         val lineBytes = currentLine + data.copyOfRange(beginning, i)
-                        if (lineBytes.isNotEmpty()) {
+                        val line = String(lineBytes, charset).replace("\r", "")
+
+                        // Try to parse as HMI response first.
+                        if (!parseHmiResponse(line)) {
+                            // If not HMI, add to terminal.
                             val text = if (displayMode == "Hex") {
                                 lineBytes.joinToString(" ") { "%02X".format(it) }.replace("0D", "")
                             } else {
-                                String(lineBytes, charset).replace("\r", "")
+                                line
                             }
                             newLines.add(TerminalLine(text, LineType.INCOMING))
                         }

@@ -10,6 +10,7 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Bundle
+import android.util.Patterns
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -25,8 +26,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Usb
@@ -45,6 +48,8 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
@@ -220,6 +225,7 @@ fun AppUi(viewModel: MainViewModel = viewModel(), activity: MainActivity) {
 
     val navItems = listOf(
         NavItem("terminal", "Terminal", Icons.Outlined.Terminal),
+        NavItem("hmi", "HMI", Icons.Outlined.DataObject),
         NavItem("devices", "USB Devices", Icons.Outlined.Usb),
         NavItem("settings", "Settings", Icons.Outlined.Settings),
         NavItem("info", "Info", Icons.Outlined.Info)
@@ -278,6 +284,7 @@ fun AppUi(viewModel: MainViewModel = viewModel(), activity: MainActivity) {
                 modifier = Modifier.padding(it)
             ) {
                 composable("terminal") { TerminalScreen(viewModel, navController) }
+                composable("hmi") { HmiScreen(viewModel) }
                 composable("devices") { DeviceScreen(viewModel) }
                 composable("settings") { SettingsScreen(viewModel, onImportClick = { importSettingsLauncher.launch("application/json") }) }
                 composable("info") { InfoScreen() }
@@ -404,6 +411,198 @@ fun TerminalScreen(viewModel: MainViewModel, navController: androidx.navigation.
         }
     }
 }
+
+/**
+ * Composable function for the HMI screen.
+ * This screen will display the HMI parameters.
+ *
+ * @param viewModel The [MainViewModel] for this screen.
+ */
+@Composable
+fun HmiScreen(viewModel: MainViewModel) {
+    val uiState by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
+
+    var parameterToEdit by remember { mutableStateOf<HmiParameter?>(null) }
+    var showPasswordDialogFor by remember { mutableStateOf<HmiParameter?>(null) }
+
+    showPasswordDialogFor?.let { param ->
+        PasswordDialog(
+            onDismiss = { showPasswordDialogFor = null },
+            onConfirm = { password ->
+                showPasswordDialogFor = null
+                if (password == "1234") { // Hardcoded password
+                    parameterToEdit = param
+                } else {
+                    Toast.makeText(context, "Incorrect Password", Toast.LENGTH_SHORT).show()
+                }
+            }
+        )
+    }
+
+    parameterToEdit?.let { param ->
+        HmiEditDialog(
+            parameter = param,
+            onDismiss = { parameterToEdit = null },
+            onSave = { newValue ->
+                viewModel.setHmiParameter(param, newValue)
+                parameterToEdit = null
+            }
+        )
+    }
+
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Button(
+            onClick = { viewModel.fetchHmiParameters() },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = uiState.isConnected
+        ) {
+            Text("Fetch All Parameters")
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(uiState.hmiParameters) { parameter ->
+                HmiParameterItem(
+                    parameter = parameter,
+                    isConnected = uiState.isConnected,
+                    onEditClick = {
+                        if (parameter.isProtected) {
+                            showPasswordDialogFor = parameter
+                        } else {
+                            parameterToEdit = parameter
+                        }
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun HmiParameterItem(parameter: HmiParameter, isConnected: Boolean, onEditClick: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = parameter.displayName, fontWeight = FontWeight.Bold)
+                val displayValue = if (parameter.isProtected) "********" else parameter.value
+                Text(text = displayValue)
+            }
+            Button(onClick = onEditClick, enabled = isConnected) {
+                Text("Edit")
+            }
+        }
+    }
+}
+
+private fun getHmiErrorMessage(key: String, value: String): String? {
+    val intValue = value.toIntOrNull()
+    when (key) {
+        "WO" -> if (intValue == null || intValue !in 1..999) return "Must be a number between 1-999."
+        "PN" -> if (!value.matches(Regex("^C[0-9]{5}$"))) return "Must match format C00001-C99999."
+        "VN" -> if (!value.matches(Regex("^SS[0-9]{3}$"))) return "Must match format SS001-SS999."
+        "SN" -> if (intValue == null || intValue !in 1..9999999) return "Must be a number between 1-9999999."
+        "U1", "U2" -> if (!Patterns.WEB_URL.matcher(value).matches()) return "Must be a valid URL."
+        "P1", "P2", "P1T", "P2T", "T1", "T2", "VST" -> if (intValue == null || intValue !in 1..10000) return "Must be a number between 1-10000."
+        "RTC" -> if (!value.matches(Regex("^[0-9]{4}:[0-1][0-9]:[0-3][0-9]:[0-2][0-9]:[0-5][0-9]:[0-5][0-9]$"))) return "Format: YYYY:MM:DD:HH:MM:SS"
+    }
+    return null // No error
+}
+
+
+@Composable
+fun HmiEditDialog(
+    parameter: HmiParameter,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit
+) {
+    var text by remember(parameter) { mutableStateOf(parameter.value) }
+    var errorMessage by remember(parameter) { mutableStateOf<String?>(null) }
+
+    val onValueChange: (String) -> Unit = {
+        text = it
+        errorMessage = getHmiErrorMessage(parameter.key, it)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit ${parameter.displayName}") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = onValueChange,
+                    label = { Text("New Value") },
+                    isError = errorMessage != null,
+                    trailingIcon = {
+                        if (errorMessage != null) {
+                            Icon(Icons.Filled.Error, "error", tint = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                )
+                if (errorMessage != null) {
+                    Text(
+                        text = errorMessage ?: "",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(start = 16.dp, top = 4.dp)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onSave(text) }, enabled = errorMessage == null) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            Button(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+fun PasswordDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var password by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Password Required") },
+        text = {
+            OutlinedTextField(
+                value = password,
+                onValueChange = { password = it },
+                label = { Text("Password") },
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
+            )
+        },
+        confirmButton = {
+            Button(onClick = { onConfirm(password) }) {
+                Text("Confirm")
+            }
+        },
+        dismissButton = {
+            Button(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
 
 /**
  * Displays an indicator for a serial control line (e.g., RTS, CTS).
