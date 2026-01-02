@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -30,9 +31,12 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.io.IOException
 import java.nio.charset.Charset
 import java.util.ArrayDeque
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.withContext
 
 /**
@@ -68,26 +72,9 @@ data class UiState(
     /** If true, the status of the control lines (RTS, CTS, etc.) is displayed. */
     val showControlLines: Boolean = false,
 
-    // HMI Parameters
-    /** The list of HMI parameters. */
-    val hmiParameters: List<HmiParameter> = listOf(
-        HmiParameter("WO", "Work Order"),
-        HmiParameter("PN", "Part No."),
-        HmiParameter("VN", "Vendor No."),
-        HmiParameter("SN", "Serial No."),
-        HmiParameter("WF", "WiFi SSID/Password"),
-        HmiParameter("U1", "Data Push URL", isProtected = true),
-        HmiParameter("U2", "Server Health URL", isProtected = true),
-        HmiParameter("AK", "API Key", isProtected = true),
-        HmiParameter("P1", "P1 Pulse On Time (ms)"),
-        HmiParameter("P2", "P2 Pulse On Time (ms)"),
-        HmiParameter("P1T", "P1 Pulse OK Tolerance (ms)"),
-        HmiParameter("P2T", "P2 Pulse OK Tolerance (ms)"),
-        HmiParameter("T1", "Timer1 Cycle Time (ms)"),
-        HmiParameter("T2", "Timer2 Cycle Time (ms)"),
-        HmiParameter("VST", "Voltage Select to Test Start Time (ms)"),
-        HmiParameter("RTC", "RTC Time")
-    ),
+    // HMI Parameter Values
+    /** A map holding the dynamic values of the HMI parameters, keyed by the parameter key. */
+    val hmiParameterValues: Map<String, String> = emptyMap(),
 
     // Control Line Status
     /** The status of the Request to Send (RTS) line. Not serialized. */
@@ -161,23 +148,30 @@ data class UiState(
  * Represents a one-time event sent from the ViewModel to the UI.
  */
 sealed class UiEvent {
-    /** Event to trigger sharing of the log file. */
-    data class ShareLog(val uri: Uri) : UiEvent()
-    /** Event to trigger sharing of the settings file. */
-    data class ShareSettings(val uri: Uri) : UiEvent()
-    /** Event to indicate that settings have been imported successfully. */
-    data object ImportSuccess : UiEvent()
+    data class ShareFile(val uri: Uri, val mimeType: String) : UiEvent()
+    object ImportSuccess : UiEvent()
+    object HmiUploadSuccess : UiEvent()
 }
 
 /**
  * The main ViewModel for the application.
  * It manages the UI state, handles user interactions, and communicates with the [SerialService].
  */
-class MainViewModel(application: Application, private val settingsRepository: SettingsRepository) :
+class MainViewModel(application: Application, private val settingsRepository: SettingsRepository, private val hmiParameterRepository: HmiParameterRepository) :
     AndroidViewModel(application), SerialListener {
 
     private val _uiState = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
+
+    // Combine static HMI definitions from the repository with dynamic values from the UI state
+    val hmiParameters: StateFlow<List<HmiParameter>> = combine(
+        hmiParameterRepository.parametersFlow,
+        _uiState
+    ) { definitions, state ->
+        definitions.map { def ->
+            def.copy(value = state.hmiParameterValues[def.key] ?: "")
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val _eventFlow = MutableSharedFlow<UiEvent>()
     val eventFlow: SharedFlow<UiEvent> = _eventFlow.asSharedFlow()
@@ -249,7 +243,7 @@ class MainViewModel(application: Application, private val settingsRepository: Se
                     file
                 )
 
-                _eventFlow.emit(UiEvent.ShareSettings(uri))
+                _eventFlow.emit(UiEvent.ShareFile(uri, "application/json"))
             } catch (e: Exception) {
                 FileLogger.log("ViewModel", "Error exporting settings", e)
             }
@@ -276,7 +270,7 @@ class MainViewModel(application: Application, private val settingsRepository: Se
                             flowControl = importedSettings.flowControl,
                             showControlLines = importedSettings.showControlLines,
 
-                            hmiParameters = importedSettings.hmiParameters,
+                            hmiParameterValues = importedSettings.hmiParameterValues,
 
                             fontSize = importedSettings.fontSize,
                             fontStyle = importedSettings.fontStyle,
@@ -319,7 +313,7 @@ class MainViewModel(application: Application, private val settingsRepository: Se
      */
     fun fetchHmiParameters() {
         viewModelScope.launch(Dispatchers.IO) {
-            _uiState.value.hmiParameters.forEach { param ->
+            hmiParameters.value.forEach { param ->
                 val command = "GET_DT ${param.key}"
                 send(command)
                 // A small delay between commands can help prevent overwhelming the device
@@ -344,6 +338,48 @@ class MainViewModel(application: Application, private val settingsRepository: Se
     }
 
     /**
+     * Triggers a share intent for the current HMI parameters JSON.
+     */
+    fun downloadHmiParameters() {
+        viewModelScope.launch {
+            try {
+                val application = getApplication<Application>()
+                val jsonString = hmiParameterRepository.getCurrentParametersJson()
+                val directory = application.getExternalFilesDir(null)
+                val file = File(directory, "hmi_parameters_export.json")
+                file.writeText(jsonString)
+                val uri = FileProvider.getUriForFile(
+                    application,
+                    "${application.packageName}.provider",
+                    file
+                )
+                _eventFlow.emit(UiEvent.ShareFile(uri, "application/json"))
+            } catch (e: Exception) {
+                FileLogger.log("ViewModel", "Error downloading HMI parameters", e)
+            }
+        }
+    }
+
+    /**
+     * Uploads and applies a new HMI parameters JSON from a given URI.
+     */
+    fun uploadHmiParameters(uri: Uri) {
+        viewModelScope.launch {
+            try {
+                val jsonString = getApplication<Application>().contentResolver.openInputStream(uri)
+                    ?.bufferedReader()?.use { it.readText() }
+                if (jsonString != null) {
+                    hmiParameterRepository.saveParameters(jsonString)
+                    _eventFlow.emit(UiEvent.HmiUploadSuccess)
+                }
+            } catch (e: Exception) {
+                FileLogger.log("ViewModel", "Error uploading HMI parameters", e)
+            }
+        }
+    }
+
+
+    /**
      * Parses an incoming line of text to see if it's an HMI parameter update.
      * @param line The line of text from the serial port.
      * @return True if the line was parsed and handled as an HMI update, false otherwise.
@@ -355,12 +391,12 @@ class MainViewModel(application: Application, private val settingsRepository: Se
         val key = parts[0]
         val value = parts[1]
 
-        val parameterIndex = _uiState.value.hmiParameters.indexOfFirst { it.key == key }
-        if (parameterIndex != -1) {
+        // Check if the key is a valid HMI parameter key
+        if (hmiParameters.value.any { it.key == key }) {
             _uiState.update {
-                val newParameters = it.hmiParameters.toMutableList()
-                newParameters[parameterIndex] = newParameters[parameterIndex].copy(value = value)
-                it.copy(hmiParameters = newParameters)
+                val newValues = it.hmiParameterValues.toMutableMap()
+                newValues[key] = value
+                it.copy(hmiParameterValues = newValues)
             }
             return true
         }
@@ -517,7 +553,7 @@ class MainViewModel(application: Application, private val settingsRepository: Se
                     "${getApplication<Application>().packageName}.provider",
                     it
                 )
-                _eventFlow.emit(UiEvent.ShareLog(uri))
+                _eventFlow.emit(UiEvent.ShareFile(uri, "text/plain"))
             }
         }
     }

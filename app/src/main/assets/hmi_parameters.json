@@ -1,0 +1,98 @@
+[
+    {
+        "key": "WO",
+        "displayName": "Work Order",
+        "isProtected": false,
+        "validationRule": "1-999"
+    },
+    {
+        "key": "PN",
+        "displayName": "Part No.",
+        "isProtected": false,
+        "validationRule": "C00001-C99999"
+    },
+    {
+        "key": "VN",
+        "displayName": "Vendor No.",
+        "isProtected": false,
+        "validationRule": "SS001-SS999"
+    },
+    {
+        "key": "SN",
+        "displayName": "Serial No.",
+        "isProtected": false,
+        "validationRule": "1-9999999"
+    },
+    {
+        "key": "WF",
+        "displayName": "WiFi SSID/Password",
+        "isProtected": false,
+        "validationRule": null
+    },
+    {
+        "key": "U1",
+        "displayName": "Data Push URL",
+        "isProtected": true,
+        "validationRule": "URL"
+    },
+    {
+        "key": "U2",
+        "displayName": "Server Health URL",
+        "isProtected": true,
+        "validationRule": "URL"
+    },
+    {
+        "key": "AK",
+        "displayName": "API Key",
+        "isProtected": true,
+        "validationRule": null
+    },
+    {
+        "key": "P1",
+        "displayName": "P1 Pulse On Time (ms)",
+        "isProtected": false,
+        "validationRule": "1-10000"
+    },
+    {
+        "key": "P2",
+        "displayName": "P2 Pulse On Time (ms)",
+        "isProtected": false,
+        "validationRule": "1-10000"
+    },
+    {
+        "key": "P1T",
+        "displayName": "P1 Pulse OK Tolerance (ms)",
+        "isProtected": false,
+        "validationRule": "1-10000"
+    },
+    {
+        "key": "P2T",
+        "displayName": "P2 Pulse OK Tolerance (ms)",
+        "isProtected": false,
+        "validationRule": "1-10000"
+    },
+    {
+        "key": "T1",
+        "displayName": "Timer1 Cycle Time (ms)",
+        "isProtected": false,
+        "validationRule": "1-10000"
+    },
+    {
+        "key": "T2",
+        "displayName": "Timer2 Cycle Time (ms)",
+        "isProtected": false,
+        "validationRule": "1-10000"
+    },
+    {
+        "key": "VST",
+        "displayName": "Voltage Select to Test Start Time (ms)",
+        "isProtected": false,
+        "validationRule": "1-10000"
+    },
+    {
+        "key": "RTC",
+        "displayName": "RTC Time",
+        "isProtected": false,
+        "validationRule": "YYYY:MM:DD:HH:MM:SS"
+    }
+]

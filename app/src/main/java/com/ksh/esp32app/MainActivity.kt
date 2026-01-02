@@ -179,24 +179,19 @@ fun AppUi(viewModel: MainViewModel = viewModel(), activity: MainActivity) {
         contract = ActivityResultContracts.GetContent(),
         onResult = { uri -> uri?.let { viewModel.onImportSettings(it) } }
     )
+    val uploadHmiLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+        onResult = { uri -> uri?.let { viewModel.uploadHmiParameters(it) } }
+    )
 
     LaunchedEffect(key1 = Unit) {
         viewModel.eventFlow.collectLatest { event ->
             when (event) {
-                is UiEvent.ShareLog -> {
+                is UiEvent.ShareFile -> {
                     val shareIntent: Intent = Intent().apply {
                         action = Intent.ACTION_SEND
                         putExtra(Intent.EXTRA_STREAM, event.uri)
-                        type = "text/plain"
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-                    context.startActivity(Intent.createChooser(shareIntent, null))
-                }
-                is UiEvent.ShareSettings -> {
-                    val shareIntent: Intent = Intent().apply {
-                        action = Intent.ACTION_SEND
-                        putExtra(Intent.EXTRA_STREAM, event.uri)
-                        type = "application/json"
+                        type = event.mimeType
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
                     context.startActivity(Intent.createChooser(shareIntent, null))
@@ -205,6 +200,13 @@ fun AppUi(viewModel: MainViewModel = viewModel(), activity: MainActivity) {
                     Toast.makeText(
                         context,
                         "Settings imported successfully!",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+                is UiEvent.HmiUploadSuccess -> {
+                    Toast.makeText(
+                        context,
+                        "HMI parameters uploaded successfully!",
                         Toast.LENGTH_SHORT
                     ).show()
                 }
@@ -286,7 +288,7 @@ fun AppUi(viewModel: MainViewModel = viewModel(), activity: MainActivity) {
                 composable("terminal") { TerminalScreen(viewModel, navController) }
                 composable("hmi") { HmiScreen(viewModel) }
                 composable("devices") { DeviceScreen(viewModel) }
-                composable("settings") { SettingsScreen(viewModel, onImportClick = { importSettingsLauncher.launch("application/json") }) }
+                composable("settings") { SettingsScreen(viewModel, onImportClick = { importSettingsLauncher.launch("application/json") }, onUploadHmiClick = { uploadHmiLauncher.launch("application/json")}) }
                 composable("info") { InfoScreen() }
                 composable(
                     "edit_macro/{index}",
@@ -421,6 +423,7 @@ fun TerminalScreen(viewModel: MainViewModel, navController: androidx.navigation.
 @Composable
 fun HmiScreen(viewModel: MainViewModel) {
     val uiState by viewModel.uiState.collectAsState()
+    val hmiParameters by viewModel.hmiParameters.collectAsState(initial = emptyList())
     val context = LocalContext.current
 
     var parameterToEdit by remember { mutableStateOf<HmiParameter?>(null) }
@@ -464,7 +467,7 @@ fun HmiScreen(viewModel: MainViewModel) {
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(uiState.hmiParameters) { parameter ->
+            items(hmiParameters) { parameter ->
                 HmiParameterItem(
                     parameter = parameter,
                     isConnected = uiState.isConnected,
@@ -494,7 +497,7 @@ fun HmiParameterItem(parameter: HmiParameter, isConnected: Boolean, onEditClick:
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(text = parameter.displayName, fontWeight = FontWeight.Bold)
-                val displayValue = if (parameter.isProtected) "********" else parameter.value
+                val displayValue = if (parameter.isProtected && parameter.value.isNotEmpty()) "********" else parameter.value
                 Text(text = displayValue)
             }
             Button(onClick = onEditClick, enabled = isConnected) {
@@ -504,16 +507,29 @@ fun HmiParameterItem(parameter: HmiParameter, isConnected: Boolean, onEditClick:
     }
 }
 
-private fun getHmiErrorMessage(key: String, value: String): String? {
+private fun getHmiErrorMessage(rule: String?, value: String): String? {
+    if (rule.isNullOrEmpty()) return null // No validation needed
+
     val intValue = value.toIntOrNull()
-    when (key) {
-        "WO" -> if (intValue == null || intValue !in 1..999) return "Must be a number between 1-999."
-        "PN" -> if (!value.matches(Regex("^C[0-9]{5}$"))) return "Must match format C00001-C99999."
-        "VN" -> if (!value.matches(Regex("^SS[0-9]{3}$"))) return "Must match format SS001-SS999."
-        "SN" -> if (intValue == null || intValue !in 1..9999999) return "Must be a number between 1-9999999."
-        "U1", "U2" -> if (!Patterns.WEB_URL.matcher(value).matches()) return "Must be a valid URL."
-        "P1", "P2", "P1T", "P2T", "T1", "T2", "VST" -> if (intValue == null || intValue !in 1..10000) return "Must be a number between 1-10000."
-        "RTC" -> if (!value.matches(Regex("^[0-9]{4}:[0-1][0-9]:[0-3][0-9]:[0-2][0-9]:[0-5][0-9]:[0-5][0-9]$"))) return "Format: YYYY:MM:DD:HH:MM:SS"
+    when {
+        rule.matches(Regex("^\\d+-\\d+$")) -> {
+            val parts = rule.split("-")
+            val min = parts[0].toInt()
+            val max = parts[1].toInt()
+            if (intValue == null || intValue !in min..max) return "Must be a number between $min-$max."
+        }
+        rule.startsWith("C") && rule.contains("-") -> {
+            if (!value.matches(Regex("^C[0-9]{5}$"))) return "Must match format C00001-C99999."
+        }
+        rule.startsWith("SS") && rule.contains("-") -> {
+            if (!value.matches(Regex("^SS[0-9]{3}$"))) return "Must match format SS001-SS999."
+        }
+        rule == "URL" -> {
+            if (!Patterns.WEB_URL.matcher(value).matches()) return "Must be a valid URL."
+        }
+        rule == "YYYY:MM:DD:HH:MM:SS" -> {
+            if (!value.matches(Regex("^[0-9]{4}:[0-1][0-9]:[0-3][0-9]:[0-2][0-9]:[0-5][0-9]:[0-5][0-9]$"))) return "Format: YYYY:MM:DD:HH:MM:SS"
+        }
     }
     return null // No error
 }
@@ -530,7 +546,7 @@ fun HmiEditDialog(
 
     val onValueChange: (String) -> Unit = {
         text = it
-        errorMessage = getHmiErrorMessage(parameter.key, it)
+        errorMessage = getHmiErrorMessage(parameter.validationRule, it)
     }
 
     AlertDialog(
@@ -670,10 +686,10 @@ fun InfoScreen() {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(viewModel: MainViewModel, onImportClick: () -> Unit) {
+fun SettingsScreen(viewModel: MainViewModel, onImportClick: () -> Unit, onUploadHmiClick: () -> Unit) {
     val uiState by viewModel.uiState.collectAsState()
     var selectedTabIndex by remember { mutableStateOf(0) }
-    val tabs = listOf("Serial", "Terminal", "Send", "Misc")
+    val tabs = listOf("Serial", "Terminal", "Send", "HMI", "Misc")
 
     Column(modifier = Modifier.fillMaxWidth()) {
         TabRow(selectedTabIndex = selectedTabIndex) {
@@ -685,7 +701,8 @@ fun SettingsScreen(viewModel: MainViewModel, onImportClick: () -> Unit) {
             0 -> SerialSettingsTab(uiState, viewModel)
             1 -> TerminalSettingsTab(uiState, viewModel)
             2 -> SendSettingsTab(uiState, viewModel)
-            3 -> MiscSettingsTab(uiState, viewModel, onImportClick)
+            3 -> HmiSettingsTab(viewModel, onUploadHmiClick)
+            4 -> MiscSettingsTab(uiState, viewModel, onImportClick)
         }
     }
 }
@@ -788,6 +805,30 @@ fun SendSettingsTab(uiState: UiState, viewModel: MainViewModel) {
 }
 
 /**
+ * Composable for the HMI settings tab.
+ */
+@Composable
+fun HmiSettingsTab(viewModel: MainViewModel, onUploadClick: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            "Define the HMI screen layout by uploading a custom hmi_parameters.json file. " +
+                    "Download the current configuration to use as a template."
+        )
+        Button(onClick = onUploadClick) {
+            Text("Upload HMI JSON")
+        }
+        Button(onClick = { viewModel.downloadHmiParameters() }) {
+            Text("Download HMI JSON")
+        }
+    }
+}
+
+
+/**
  * Composable for the Miscellaneous settings tab.
  *
  * @param uiState The current [UiState].
@@ -815,10 +856,10 @@ fun MiscSettingsTab(uiState: UiState, viewModel: MainViewModel, onImportClick: (
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onImportClick) {
-                Text("Import Settings")
+                Text("Import App Settings")
             }
             Button(onClick = { viewModel.onExportSettings() }) {
-                Text("Export Settings")
+                Text("Export App Settings")
             }
         }
     }
