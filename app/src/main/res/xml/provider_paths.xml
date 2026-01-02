@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    This file defines the paths that can be shared using a FileProvider.
+    FileProvider is a special subclass of ContentProvider that facilitates secure sharing of files
+    associated with an app by creating a content:// Uri for a file instead of a file:/// Uri.
+
+    For more information, see: https://developer.android.com/reference/androidx/core/content/FileProvider
+-->
+<paths>
+    <!--
+        This tag represents files in the root of your app's external storage area.
+        The path attribute specifies a subdirectory within the external files directory. A value of "." indicates the root.
+        The name attribute is a URI path segment that will be included in the content URI.
+        For example, a file located at getExternalFilesDir(null)/my_log.txt
+        would be shared with a URI like: content://<authority>/external_files/my_log.txt
+    -->
+    <external-files-path name="external_files" path="."/>
+</paths>

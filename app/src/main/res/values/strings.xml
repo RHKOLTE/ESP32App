@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    This file contains the string resources for the application.
+    String resources allow you to manage your app's user interface text in a single location.
+    This makes it easier to translate and update your app's text.
+-->
+<resources>
+    <!-- The name of the application, as it appears on the device's home screen and in the app drawer. -->
+    <string name="app_name">ESP32App</string>
+</resources>

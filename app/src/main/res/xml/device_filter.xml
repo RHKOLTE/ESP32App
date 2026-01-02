@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    This file specifies a filter for USB devices that the application is interested in.
+    When a device matching this filter is connected, the application can be notified.
+    This is used in conjunction with an intent filter for android.hardware.usb.action.USB_DEVICE_ATTACHED
+    in the AndroidManifest.xml file.
+-->
+<resources>
+    <!--
+        This filter matches a USB device with a specific vendor ID and product ID.
+        Vendor ID: 4292 (0x10c4) - Silicon Labs
+        Product ID: 60000 (0xea60) - CP2102 USB to UART Bridge Controller
+        This is a common chip used in ESP32 development boards.
+    -->
+    <usb-device vendor-id="4292" product-id="60000" />
+</resources>

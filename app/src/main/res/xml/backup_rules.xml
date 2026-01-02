@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    This file configures the rules for Auto Backup for apps targeting API 30 and lower, and for Data Restore for apps targeting API 31+.
+    Auto Backup automatically backs up a user's data from apps that target and run on Android 6.0 (API level 23) or higher.
+    Android preserves app data by uploading it to the user's Google Drive, where it's protected by the user's Google Account credentials.
+    The backup is end-to-end encrypted on Google's servers.
+    For more information, see: https://developer.android.com/guide/topics/data/autobackup
+-->
+<full-backup-content>
+    <!--
+        By default, Auto Backup includes almost all of the app's files.
+        This file allows you to include or exclude specific files.
+
+        The following example shows how to exclude a specific shared preferences file from being backed up.
+   -->
+    <!--
+   <include domain="sharedpref" path="."/>
+   <exclude domain="sharedpref" path="device.xml"/>
+    -->
+</full-backup-content>

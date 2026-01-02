@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    This file defines the visual style (theme) for the application.
+    A theme is a collection of attributes that can be applied to an entire app, activity, or view hierarchy.
+    Themes can specify colors, fonts, and other style properties.
+-->
+<resources>
+
+    <!--
+        The main theme for the ESP32App application.
+        It inherits from `android:Theme.Material.Light.NoActionBar`, which is a light theme with no action bar.
+        The action bar is being replaced by a custom TopAppBar in the Jetpack Compose UI.
+    -->
+    <style name="Theme.ESP32App" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
