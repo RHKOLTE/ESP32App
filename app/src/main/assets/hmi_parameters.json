@@ -1,98 +1,136 @@
 [
     {
+      "key": "V",
+      "displayName": "Debug enable",
+      "isProtected": false,
+      "validationRule": "0-1",
+      "editable": true
+    },
+    {
         "key": "WO",
         "displayName": "Work Order",
         "isProtected": false,
-        "validationRule": "1-999"
+        "validationRule": "1-999",
+        "editable": true
     },
     {
         "key": "PN",
         "displayName": "Part No.",
         "isProtected": false,
-        "validationRule": "C00001-C99999"
+        "validationRule": "C00001-C99999",
+        "editable": true
     },
     {
         "key": "VN",
         "displayName": "Vendor No.",
         "isProtected": false,
-        "validationRule": "SS001-SS999"
+        "validationRule": "SS001-SS999",
+        "editable": true
     },
     {
         "key": "SN",
         "displayName": "Serial No.",
         "isProtected": false,
-        "validationRule": "1-9999999"
+        "validationRule": "1-9999999",
+        "editable": false
     },
     {
         "key": "WF",
         "displayName": "WiFi SSID/Password",
         "isProtected": false,
-        "validationRule": null
+        "validationRule": null,
+        "editable": true
     },
+    {
+        "key": "WFS",
+        "displayName": "WiFi Status",
+        "isProtected": false,
+        "validationRule": null,
+        "editable": false
+    },
+    {
+        "key": "EPS",
+        "displayName": "End Point Status",
+        "isProtected": false,
+        "validationRule": null,
+        "editable": false
+    },
+
     {
         "key": "U1",
         "displayName": "Data Push URL",
         "isProtected": true,
-        "validationRule": "URL"
+        "validationRule": "URL",
+        "editable": false
     },
     {
         "key": "U2",
         "displayName": "Server Health URL",
         "isProtected": true,
-        "validationRule": "URL"
+        "validationRule": "URL",
+        "editable": false
     },
     {
         "key": "AK",
         "displayName": "API Key",
-        "isProtected": true,
-        "validationRule": null
+        "isProtected": false,
+        "validationRule": null,
+        "editable": false
     },
     {
         "key": "P1",
         "displayName": "P1 Pulse On Time (ms)",
         "isProtected": false,
-        "validationRule": "1-10000"
+        "validationRule": "1-10000",
+        "editable": true
     },
     {
         "key": "P2",
         "displayName": "P2 Pulse On Time (ms)",
         "isProtected": false,
-        "validationRule": "1-10000"
+        "validationRule": "1-10000",
+        "editable": true
     },
     {
         "key": "P1T",
         "displayName": "P1 Pulse OK Tolerance (ms)",
         "isProtected": false,
-        "validationRule": "1-10000"
+        "validationRule": "1-10000",
+        "editable": true
     },
     {
         "key": "P2T",
         "displayName": "P2 Pulse OK Tolerance (ms)",
         "isProtected": false,
-        "validationRule": "1-10000"
+        "validationRule": "1-10000",
+        "editable": true
     },
     {
         "key": "T1",
         "displayName": "Timer1 Cycle Time (ms)",
         "isProtected": false,
-        "validationRule": "1-10000"
+        "validationRule": "1-10000",
+        "editable": true
     },
     {
         "key": "T2",
         "displayName": "Timer2 Cycle Time (ms)",
         "isProtected": false,
-        "validationRule": "1-10000"
+        "validationRule": "1-10000",
+        "editable": true
     },
     {
         "key": "VST",
         "displayName": "Voltage Select to Test Start Time (ms)",
         "isProtected": false,
-        "validationRule": "1-10000"
+        "validationRule": "1-10000",
+        "editable": true
     },
     {
         "key": "RTC",
         "displayName": "RTC Time",
         "isProtected": false,
-        "validationRule": "YYYY:MM:DD:HH:MM:SS"
+        "validationRule": "YYYY:MM:DD:HH:MM:SS",
+        "editable": true
     }
 ]

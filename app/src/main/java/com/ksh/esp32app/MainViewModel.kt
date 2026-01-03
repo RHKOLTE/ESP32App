@@ -72,9 +72,13 @@ data class UiState(
     /** If true, the status of the control lines (RTS, CTS, etc.) is displayed. */
     val showControlLines: Boolean = false,
 
-    // HMI Parameter Values
+    // HMI Settings
     /** A map holding the dynamic values of the HMI parameters, keyed by the parameter key. */
     val hmiParameterValues: Map<String, String> = emptyMap(),
+    /** The delay in milliseconds between sending HMI commands. */
+    val hmiCommandDelay: Int = 50,
+    /** If true, HMI responses (e.g., "WO: 123") are shown in the terminal. */
+    val showHmiResponsesInTerminal: Boolean = false,
 
     // Control Line Status
     /** The status of the Request to Send (RTS) line. Not serialized. */
@@ -271,6 +275,8 @@ class MainViewModel(application: Application, private val settingsRepository: Se
                             showControlLines = importedSettings.showControlLines,
 
                             hmiParameterValues = importedSettings.hmiParameterValues,
+                            hmiCommandDelay = importedSettings.hmiCommandDelay,
+                            showHmiResponsesInTerminal = importedSettings.showHmiResponsesInTerminal,
 
                             fontSize = importedSettings.fontSize,
                             fontStyle = importedSettings.fontStyle,
@@ -313,11 +319,12 @@ class MainViewModel(application: Application, private val settingsRepository: Se
      */
     fun fetchHmiParameters() {
         viewModelScope.launch(Dispatchers.IO) {
+            val delayMs = _uiState.value.hmiCommandDelay.toLong()
             hmiParameters.value.forEach { param ->
                 val command = "GET_DT ${param.key}"
                 send(command)
                 // A small delay between commands can help prevent overwhelming the device
-                kotlinx.coroutines.delay(50)
+                kotlinx.coroutines.delay(delayMs)
             }
         }
     }
@@ -436,6 +443,16 @@ class MainViewModel(application: Application, private val settingsRepository: Se
 
     fun setShowControlLines(show: Boolean) {
         _uiState.update { it.copy(showControlLines = show) }
+        saveSettings()
+    }
+
+    fun setHmiCommandDelay(delay: Int) {
+        _uiState.update { it.copy(hmiCommandDelay = delay) }
+        saveSettings()
+    }
+
+    fun setShowHmiResponsesInTerminal(show: Boolean) {
+        _uiState.update { it.copy(showHmiResponsesInTerminal = show) }
         saveSettings()
     }
 
@@ -683,9 +700,8 @@ class MainViewModel(application: Application, private val settingsRepository: Se
         viewModelScope.launch(Dispatchers.Default) {
             val uiState = _uiState.value
             val charset = Charset.forName(uiState.charset)
-            val displayMode = uiState.displayMode
 
-            val newLines = mutableListOf<TerminalLine>()
+            val linesToAdd = mutableListOf<TerminalLine>()
 
             val dataCopy = synchronized(datas) {
                 val copy = mutableListOf<ByteArray>()
@@ -706,15 +722,15 @@ class MainViewModel(application: Application, private val settingsRepository: Se
                         val lineBytes = currentLine + data.copyOfRange(beginning, i)
                         val line = String(lineBytes, charset).replace("\r", "")
 
-                        // Try to parse as HMI response first.
-                        if (!parseHmiResponse(line)) {
-                            // If not HMI, add to terminal.
-                            val text = if (displayMode == "Hex") {
+                        val isHmiResponse = parseHmiResponse(line)
+
+                        if (!isHmiResponse || uiState.showHmiResponsesInTerminal) {
+                            val text = if (uiState.displayMode == "Hex") {
                                 lineBytes.joinToString(" ") { "%02X".format(it) }.replace("0D", "")
                             } else {
                                 line
                             }
-                            newLines.add(TerminalLine(text, LineType.INCOMING))
+                            linesToAdd.add(TerminalLine(text, LineType.INCOMING))
                         }
                         currentLine = byteArrayOf()
                         beginning = i + 1
@@ -726,10 +742,10 @@ class MainViewModel(application: Application, private val settingsRepository: Se
                 }
             }
 
-            if (newLines.isNotEmpty()) {
+            if (linesToAdd.isNotEmpty()) {
                 withContext(Dispatchers.Main) {
                     _uiState.value.let {
-                        val allLines = (it.terminalLines + newLines.map { line ->
+                        val allLines = (it.terminalLines + linesToAdd.map { line ->
                             val text = if (it.showTimestamps) {
                                 try {
                                     val timestamp = java.text.SimpleDateFormat(it.timestampFormat, java.util.Locale.getDefault()).format(java.util.Date())

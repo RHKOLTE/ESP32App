@@ -381,6 +381,7 @@ fun TerminalScreen(viewModel: MainViewModel, navController: androidx.navigation.
                 )
             }
         }
+        Spacer(modifier = Modifier.height(8.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for(i in 0 until uiState.macroButtonCount) {
                 Card(
@@ -500,7 +501,7 @@ fun HmiParameterItem(parameter: HmiParameter, isConnected: Boolean, onEditClick:
                 val displayValue = if (parameter.isProtected && parameter.value.isNotEmpty()) "********" else parameter.value
                 Text(text = displayValue)
             }
-            Button(onClick = onEditClick, enabled = isConnected) {
+            Button(onClick = onEditClick, enabled = isConnected && parameter.editable) {
                 Text("Edit")
             }
         }
@@ -701,7 +702,7 @@ fun SettingsScreen(viewModel: MainViewModel, onImportClick: () -> Unit, onUpload
             0 -> SerialSettingsTab(uiState, viewModel)
             1 -> TerminalSettingsTab(uiState, viewModel)
             2 -> SendSettingsTab(uiState, viewModel)
-            3 -> HmiSettingsTab(viewModel, onUploadHmiClick)
+            3 -> HmiSettingsTab(uiState, viewModel, onUploadHmiClick)
             4 -> MiscSettingsTab(uiState, viewModel, onImportClick)
         }
     }
@@ -808,9 +809,9 @@ fun SendSettingsTab(uiState: UiState, viewModel: MainViewModel) {
  * Composable for the HMI settings tab.
  */
 @Composable
-fun HmiSettingsTab(viewModel: MainViewModel, onUploadClick: () -> Unit) {
+fun HmiSettingsTab(uiState: UiState, viewModel: MainViewModel, onUploadClick: () -> Unit) {
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -818,6 +819,17 @@ fun HmiSettingsTab(viewModel: MainViewModel, onUploadClick: () -> Unit) {
             "Define the HMI screen layout by uploading a custom hmi_parameters.json file. " +
                     "Download the current configuration to use as a template."
         )
+        OutlinedTextField(
+            value = uiState.hmiCommandDelay.toString(),
+            onValueChange = { viewModel.setHmiCommandDelay(it.toIntOrNull() ?: 50) },
+            label = { Text("HMI Command Delay (ms)") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = uiState.showHmiResponsesInTerminal, onCheckedChange = { viewModel.setShowHmiResponsesInTerminal(it) })
+            Text("Show HMI Responses in Terminal")
+        }
+        Spacer(modifier = Modifier.height(8.dp))
         Button(onClick = onUploadClick) {
             Text("Upload HMI JSON")
         }
