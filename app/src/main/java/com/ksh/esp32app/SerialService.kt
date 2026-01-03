@@ -38,7 +38,6 @@ class SerialService : Service(), SerialInputOutputManager.Listener {
     private var port: UsbSerialPort? = null
     private var serialIoManager: SerialInputOutputManager? = null
     private var connected = false
-    private var isInitializing = false
 
     /**
      * Called when a client binds to the service.
@@ -63,6 +62,9 @@ class SerialService : Service(), SerialInputOutputManager.Listener {
     fun connect(listener: SerialListener, port: UsbSerialPort, baudRate: Int, dataBits: Int, stopBits: Int, parity: Int, quietPeriod: Int) {
         this.listener = listener
         this.port = port
+        connected = false
+        mainLooper.post { this.listener?.onSerialInitialize() }
+
         try {
             val usbManager = getSystemService(Context.USB_SERVICE) as UsbManager
             val usbDeviceConnection = usbManager.openDevice(port.device) ?: throw IOException("Failed to open device")
@@ -72,11 +74,7 @@ class SerialService : Service(), SerialInputOutputManager.Listener {
             port.dtr = false
             port.rts = false
 
-            // Set a flag to ignore incoming data during the initial flood.
-            isInitializing = true
-            connected = false
-
-            // Start the I/O manager immediately. onNewData will begin firing but will drop the data.
+            // Start the I/O manager immediately. onNewData will begin firing but will be ignored by the ViewModel.
             serialIoManager = SerialInputOutputManager(port, this)
             serialIoManager?.start()
             
@@ -84,23 +82,19 @@ class SerialService : Service(), SerialInputOutputManager.Listener {
             createNotification()
 
             // After a "quiet period", we'll consider the connection stable and start processing data.
-            // This is necessary because the device floods the connection with status messages for
-            // about 20-30 seconds on startup. This delay prevents an ANR (Application Not Responding).
             val quietPeriodMillis = quietPeriod * 1000L
             Handler(Looper.getMainLooper()).postDelayed({
                 if (this.port?.isOpen != true) {
-                    isInitializing = false
+                    mainLooper.post { this.listener?.onSerialConnectError(IOException("Port closed during quiet period.")) }
                     return@postDelayed // Port was closed during the quiet period
                 }
                 FileLogger.log("SerialService", "Quiet period finished. Accepting data.")
-                isInitializing = false
                 connected = true
                 mainLooper.post { this.listener?.onSerialConnect() }
             }, quietPeriodMillis) // Use configurable quiet period.
 
         } catch (e: Exception) {
             // If an error occurs, notify the listener.
-            isInitializing = false
             FileLogger.log("SerialService", "Error during connect", e)
             mainLooper.post { this.listener?.onSerialConnectError(e) }
         }
@@ -110,7 +104,6 @@ class SerialService : Service(), SerialInputOutputManager.Listener {
      * Disconnects from the serial port and stops the service.
      */
     fun disconnect() {
-        isInitializing = false
         connected = false
         serialIoManager?.stop()
         serialIoManager = null
@@ -144,11 +137,7 @@ class SerialService : Service(), SerialInputOutputManager.Listener {
      * @param data The new data that was received.
      */
     override fun onNewData(data: ByteArray) {
-        if (isInitializing || !connected) {
-            // While initializing, drop all incoming data to avoid flooding the main thread.
-            return
-        }
-        // Post the data to the main looper to be processed by the listener (ViewModel).
+        // The ViewModel is now responsible for handling the initialization state.
         mainLooper.post { listener?.onSerialRead(ArrayDeque(listOf(data))) }
     }
 

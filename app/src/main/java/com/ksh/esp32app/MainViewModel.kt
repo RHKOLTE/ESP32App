@@ -17,6 +17,7 @@ import androidx.lifecycle.viewModelScope
 import com.hoho.android.usbserial.driver.UsbSerialDriver
 import com.hoho.android.usbserial.driver.UsbSerialPort
 import com.hoho.android.usbserial.driver.UsbSerialProber
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -25,6 +26,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
@@ -57,6 +59,9 @@ data class UiState(
     /** True if the app is currently connected to a device. Not serialized. */
     @Transient
     val isConnected: Boolean = false,
+    /** True if the app is in the middle of the connection quiet period. */
+    @Transient
+    val isInitializing: Boolean = false,
 
     // Serial Communication Settings
     /** The baud rate for serial communication (e.g., 9600, 115200). */
@@ -182,7 +187,7 @@ class MainViewModel(application: Application, private val settingsRepository: Se
 
     private val usbManager by lazy { getApplication<Application>().getSystemService(Context.USB_SERVICE) as UsbManager }
     private var serialService: SerialService? = null
-    private var currentLine = byteArrayOf()
+    private val serialDataChannel = Channel<ByteArray>(Channel.UNLIMITED)
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, service: IBinder) {
@@ -219,6 +224,41 @@ class MainViewModel(application: Application, private val settingsRepository: Se
                 savedSettings.copy(devices = currentState.devices)
             }
             refreshDevices()
+        }
+        // Single-threaded coroutine to process serial data sequentially
+        viewModelScope.launch(Dispatchers.Default) {
+            var currentLine = byteArrayOf()
+
+            serialDataChannel.receiveAsFlow().collect { data ->
+                if (_uiState.value.detailedLogging) {
+                    FileLogger.log("ViewModel", "Raw data received: ${data.joinToString(" ") { "%02X".format(it) }}")
+                }
+                var beginning = 0
+                for (i in data.indices) {
+                    // Split data by newline character (0x0A).
+                    if (data[i] == 0x0A.toByte()) {
+                        val lineBytes = currentLine + data.copyOfRange(beginning, i)
+                        val line = String(lineBytes, Charset.forName(_uiState.value.charset)).replace("\r", "")
+
+                        val isHmiResponse = parseHmiResponse(line)
+
+                        if (!isHmiResponse || _uiState.value.showHmiResponsesInTerminal) {
+                            val text = if (_uiState.value.displayMode == "Hex") {
+                                lineBytes.joinToString(" ") { "%02X".format(it) }.replace("0D", "")
+                            } else {
+                                line
+                            }
+                            addTerminalLine(text, LineType.INCOMING)
+                        }
+                        currentLine = byteArrayOf()
+                        beginning = i + 1
+                    }
+                }
+                // Add any remaining data to the current line buffer.
+                if (beginning < data.size) {
+                    currentLine += data.copyOfRange(beginning, data.size)
+                }
+            }
         }
     }
 
@@ -579,8 +619,10 @@ class MainViewModel(application: Application, private val settingsRepository: Se
     fun send(data: String) {
         if (!_uiState.value.isConnected) return
 
-        if (_uiState.value.localEcho) {
-            addTerminalLine(data, LineType.OUTGOING)
+        viewModelScope.launch {
+            if (_uiState.value.localEcho) {
+                addTerminalLine(data, LineType.OUTGOING)
+            }
         }
 
         val dataBytes = if (_uiState.value.displayMode == "Hex") {
@@ -644,21 +686,21 @@ class MainViewModel(application: Application, private val settingsRepository: Se
     fun connectToDevice(driver: UsbSerialDriver) {
         // Clear terminal and serial buffer before connecting
         _uiState.update { it.copy(terminalLines = emptyList()) }
-        currentLine = byteArrayOf()
 
         val intent = Intent(getApplication(), SerialService::class.java)
         getApplication<Application>().bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
-        _uiState.update { it.copy(isConnected = true, selectedDevice = driver) }
     }
 
     /** Disconnects from the serial device and unbinds from the service. */
     fun disconnect() {
-        if (!_uiState.value.isConnected) return
+        if (!_uiState.value.isConnected && !_uiState.value.isInitializing) return
 
-        if (_uiState.value.showConnectionMessages) {
-            addTerminalLine("Disconnected", LineType.STATUS)
+        viewModelScope.launch {
+            if (_uiState.value.showConnectionMessages) {
+                addTerminalLine("Disconnected", LineType.STATUS)
+            }
         }
-        _uiState.update { it.copy(isConnected = false) }
+        _uiState.update { it.copy(isConnected = false, isInitializing = false) }
         try {
             getApplication<Application>().unbindService(serviceConnection)
         } catch (ignored: IllegalArgumentException) {}
@@ -666,110 +708,56 @@ class MainViewModel(application: Application, private val settingsRepository: Se
     }
 
     /** Adds a line of text to the terminal buffer. */
-    private fun addTerminalLine(line: String, type: LineType) {
-        val uiState = _uiState.value
-        val text = if (uiState.showTimestamps) {
-            try {
-                val timestamp = java.text.SimpleDateFormat(uiState.timestampFormat, java.util.Locale.getDefault()).format(java.util.Date())
-                "$timestamp: $line"
-            } catch (e: Exception) {
-                "[Timestamp Error]: $line"
+    private suspend fun addTerminalLine(line: String, type: LineType) {
+        withContext(Dispatchers.Main) {
+            val uiState = _uiState.value
+            val text = if (uiState.showTimestamps) {
+                try {
+                    val timestamp = java.text.SimpleDateFormat(uiState.timestampFormat, java.util.Locale.getDefault()).format(java.util.Date())
+                    "$timestamp: $line"
+                } catch (e: Exception) {
+                    "[Timestamp Error]: $line"
+                }
+            } else {
+                line
             }
-        } else {
-            line
-        }
 
-        val newLines = (uiState.terminalLines + TerminalLine(text, type)).takeLast(uiState.maxLines)
-        _uiState.update { it.copy(terminalLines = newLines) }
+            val newLines = (uiState.terminalLines + TerminalLine(text, type)).takeLast(uiState.maxLines)
+            _uiState.update { it.copy(terminalLines = newLines) }
+        }
     }
 
     // region SerialListener Callbacks
 
+    override fun onSerialInitialize() {
+        _uiState.update { it.copy(isInitializing = true) }
+    }
+
     override fun onSerialConnect() {
+        _uiState.update { it.copy(isConnected = true, isInitializing = false) }
         if (_uiState.value.showConnectionMessages) {
-            addTerminalLine("Connected", LineType.STATUS)
+            viewModelScope.launch {
+                addTerminalLine("Connected", LineType.STATUS)
+            }
         }
     }
 
     override fun onSerialConnectError(e: Exception) {
-        addTerminalLine("Connection Failed: ${e.message}", LineType.STATUS)
+        viewModelScope.launch {
+            addTerminalLine("Connection Failed: ${e.message}", LineType.STATUS)
+        }
         disconnect()
     }
 
     override fun onSerialRead(datas: ArrayDeque<ByteArray>) {
-        viewModelScope.launch(Dispatchers.Default) {
-            val uiState = _uiState.value
-            val charset = Charset.forName(uiState.charset)
-
-            val linesToAdd = mutableListOf<TerminalLine>()
-
-            val dataCopy = synchronized(datas) {
-                val copy = mutableListOf<ByteArray>()
-                while (datas.isNotEmpty()) {
-                    copy.add(datas.removeFirst())
-                }
-                copy
-            }
-
-            for (data in dataCopy) {
-                if (uiState.detailedLogging) {
-                    FileLogger.log("ViewModel", "Raw data received: ${data.joinToString(" ") { "%02X".format(it) }}")
-                }
-                var beginning = 0
-                for (i in data.indices) {
-                    // Split data by newline character (0x0A).
-                    if (data[i] == 0x0A.toByte()) {
-                        val lineBytes = currentLine + data.copyOfRange(beginning, i)
-                        val line = String(lineBytes, charset).replace("\r", "")
-
-                        val isHmiResponse = parseHmiResponse(line)
-
-                        if (!isHmiResponse || uiState.showHmiResponsesInTerminal) {
-                            val text = if (uiState.displayMode == "Hex") {
-                                lineBytes.joinToString(" ") { "%02X".format(it) }.replace("0D", "")
-                            } else {
-                                line
-                            }
-                            linesToAdd.add(TerminalLine(text, LineType.INCOMING))
-                        }
-                        currentLine = byteArrayOf()
-                        beginning = i + 1
-                    }
-                }
-                // Add any remaining data to the current line buffer.
-                if (beginning < data.size) {
-                    currentLine += data.copyOfRange(beginning, data.size)
-                }
-            }
-
-            if (linesToAdd.isNotEmpty()) {
-                withContext(Dispatchers.Main) {
-                    _uiState.value.let {
-                        val allLines = (it.terminalLines + linesToAdd.map { line ->
-                            val text = if (it.showTimestamps) {
-                                try {
-                                    val timestamp = java.text.SimpleDateFormat(it.timestampFormat, java.util.Locale.getDefault()).format(java.util.Date())
-                                    "$timestamp: ${line.text}"
-                                } catch (e: Exception) {
-                                    "[Timestamp Error]: ${line.text}"
-                                }
-                            } else {
-                                line.text
-                            }
-                            TerminalLine(text, line.type)
-                        }).takeLast(it.maxLines)
-                        _uiState.update { it.copy(terminalLines = allLines) }
-                    }
-                }
-            }
-        }
+        datas.forEach { serialDataChannel.trySend(it) }
     }
 
     override fun onSerialIoError(e: Exception) {
         if (_uiState.value.isConnected) {
-            val msg = "Serial port run error: ${e.message}"
-            FileLogger.log("ViewModel", msg, e)
-            addTerminalLine(msg, LineType.STATUS)
+            viewModelScope.launch {
+                addTerminalLine("Serial port run error: ${e.message}", LineType.STATUS)
+            }
             disconnect()
         }
     }
@@ -792,7 +780,7 @@ class MainViewModel(application: Application, private val settingsRepository: Se
 
         val intent = Intent(getApplication(), SerialService::class.java)
         getApplication<Application>().stopService(intent)
-
+        serialDataChannel.close()
         super.onCleared()
     }
 }

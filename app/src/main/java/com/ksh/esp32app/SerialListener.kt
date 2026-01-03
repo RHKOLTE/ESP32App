@@ -8,7 +8,12 @@ import java.util.ArrayDeque
  */
 interface SerialListener {
     /**
-     * Called when a serial connection is successfully established.
+     * Called when the connection process begins.
+     */
+    fun onSerialInitialize()
+
+    /**
+     * Called when a serial connection is successfully established and the quiet period is over.
      */
     fun onSerialConnect()
 
